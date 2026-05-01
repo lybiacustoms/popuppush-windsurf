@@ -1,0 +1,159 @@
+# Pop-up Push Pro - Docker Compose Production Setup
+# Complete infrastructure for cloud deployment
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: popuppush-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-popuppush}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-SecurePass123!}
+      POSTGRES_DB: ${DB_NAME:-popuppush}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./cloud-api/database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./cloud-api/database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - popuppush-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-popuppush} -d ${DB_NAME:-popuppush}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache & Pub/Sub
+  redis:
+    image: redis:7-alpine
+    container_name: popuppush-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-RedisPass123}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - popuppush-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Cloud API (Backend)
+  api:
+    build:
+      context: ./cloud-api
+      dockerfile: Dockerfile
+    container_name: popuppush-api
+    restart: unless-stopped
+    environment:
+      # Server
+      NODE_ENV: production
+      PORT: 3001
+      
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-popuppush}
+      DB_USER: ${DB_USER:-popuppush}
+      DB_PASSWORD: ${DB_PASSWORD:-SecurePass123!}
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-RedisPass123}
+      
+      # JWT
+      JWT_SECRET: ${JWT_SECRET:-YourSuperSecretJWTKey2024}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      
+      # Sports API
+      SPORTS_API_KEY: ${SPORTS_API_KEY}
+      SPORTS_API_BASE_URL: ${SPORTS_API_BASE_URL:-https://v3.football.api-sports.io}
+      
+      # Email
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      
+      # Storage
+      UPLOAD_DIR: /app/uploads
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-100}
+      
+      # Features
+      ENABLE_ANALYTICS: ${ENABLE_ANALYTICS:-true}
+      ENABLE_AUTO_MATCHES: ${ENABLE_AUTO_MATCHES:-true}
+    volumes:
+      - uploads_data:/app/uploads
+    ports:
+      - "3001:3001"
+    networks:
+      - popuppush-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: popuppush-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - uploads_data:/var/www/uploads:ro
+    networks:
+      - popuppush-network
+    depends_on:
+      - api
+
+  # pgAdmin (Optional - Database Management)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: popuppush-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@popuppush.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    networks:
+      - popuppush-network
+    depends_on:
+      - postgres
+
+# Volumes
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  uploads_data:
+    driver: local
+
+# Networks
+networks:
+  popuppush-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

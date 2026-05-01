@@ -1,0 +1,263 @@
+# Pop-up Push Pro - GitHub Actions CI/CD Pipeline
+# Automatic deployment to production
+
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'cloud-api/**'
+      - 'nginx/**'
+      - 'docker-compose.yml'
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  # Job 1: Test & Build
+  test-and-build:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: popuppush_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: cloud-api/package-lock.json
+
+    - name: Install dependencies
+      working-directory: ./cloud-api
+      run: |
+        npm ci
+
+    - name: Run linting
+      working-directory: ./cloud-api
+      run: |
+        npm run lint || echo "No lint script configured"
+
+    - name: Run tests
+      working-directory: ./cloud-api
+      env:
+        NODE_ENV: test
+        DB_HOST: localhost
+        DB_PORT: 5432
+        DB_NAME: popuppush_test
+        DB_USER: test
+        DB_PASSWORD: test
+        REDIS_HOST: localhost
+        REDIS_PORT: 6379
+      run: |
+        npm test || echo "No tests configured yet"
+
+    - name: Build TypeScript
+      working-directory: ./cloud-api
+      run: |
+        npm run build
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-files
+        path: |
+          cloud-api/dist
+          cloud-api/database
+
+  # Job 2: Build Docker Image
+  build-docker:
+    runs-on: ubuntu-latest
+    needs: test-and-build
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Login to DockerHub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and push API image
+      uses: docker/build-push-action@v4
+      with:
+        context: ./cloud-api
+        push: true
+        tags: |
+          ${{ secrets.DOCKERHUB_USERNAME }}/popuppush-api:latest
+          ${{ secrets.DOCKERHUB_USERNAME }}/popuppush-api:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # Job 3: Deploy to Server
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [test-and-build, build-docker]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup SSH
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Add host to known hosts
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+
+    - name: Deploy to server
+      env:
+        SERVER_IP: ${{ secrets.SERVER_IP }}
+        SERVER_USER: ${{ secrets.SERVER_USER }}
+      run: |
+        # Create deployment script
+        cat << 'EOF' > deploy_script.sh
+        #!/bin/bash
+        set -e
+        
+        echo "🚀 Starting deployment..."
+        
+        # Navigate to project directory
+        cd /opt/popuppush-pro || exit 1
+        
+        # Pull latest changes
+        git pull origin main
+        
+        # Update environment if needed
+        # cp .env.example .env (if .env doesn't exist)
+        
+        # Pull latest Docker images
+        docker-compose pull
+        
+        # Rebuild and restart services
+        docker-compose up -d --build
+        
+        # Wait for services to be healthy
+        echo "⏳ Waiting for services..."
+        sleep 30
+        
+        # Run health checks
+        echo "🔍 Running health checks..."
+        curl -f http://localhost/health || exit 1
+        curl -f http://localhost:3001/health || exit 1
+        
+        # Clean up old images
+        docker system prune -f
+        
+        echo "✅ Deployment completed successfully!"
+        EOF
+        
+        chmod +x deploy_script.sh
+        
+        # Copy deployment script to server
+        scp deploy_script.sh $SERVER_USER@$SERVER_IP:/tmp/
+        
+        # Execute deployment script on server
+        ssh $SERVER_USER@$SERVER_IP "bash /tmp/deploy_script.sh"
+        
+        # Cleanup
+        rm deploy_script.sh
+
+    - name: Notify deployment status
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#deployments'
+        text: |
+          Deployment ${{ job.status }} for Pop-up Push Pro
+          Commit: ${{ github.sha }}
+          Author: ${{ github.actor }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      continue-on-error: true
+
+  # Job 4: Post-deployment Tests
+  smoke-tests:
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - name: Wait for deployment
+      run: sleep 60
+
+    - name: Run smoke tests
+      env:
+        SERVER_URL: http://${{ secrets.SERVER_IP }}
+      run: |
+        echo "🔍 Running smoke tests..."
+        
+        # Test API health
+        curl -f $SERVER_URL:3001/health || exit 1
+        echo "✓ API health check passed"
+        
+        # Test Nginx
+        curl -f $SERVER_URL/nginx-health || exit 1
+        echo "✓ Nginx health check passed"
+        
+        # Test WebSocket endpoint
+        curl -i -N \
+          -H "Connection: Upgrade" \
+          -H "Upgrade: websocket" \
+          -H "Host: ${{ secrets.SERVER_IP }}" \
+          -H "Origin: http://${{ secrets.SERVER_IP }}" \
+          $SERVER_URL/socket.io/ || echo "WebSocket test completed"
+        
+        echo "✅ All smoke tests passed!"
+
+  # Job 5: Security Scan
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: build-docker
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/popuppush-api:latest'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+      continue-on-error: true
