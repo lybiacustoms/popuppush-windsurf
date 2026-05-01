@@ -255,9 +255,11 @@ export class SportsService {
             eventId: event.id,
             cafeId: cafe.id,
             deviceId: device.id,
-            triggerType: 'match_start',
-            actionType: 'switch_layer',
-            actionConfig: { layer: 2, input: 'hdmi0' }
+            triggerType: 'auto_switch',
+            actionType: 'switch_to_hdmi',
+            actionConfig: { layer: 2, input: 'hdmi0' },
+            executedAt: new Date(),
+            executionStatus: 'executed'
           });
 
           this.logger.info(`Device ${device.id} switched to HDMI for match ${event.matchName}`);
@@ -275,7 +277,7 @@ export class SportsService {
     const cafes = await this.db.getCafesWithAutoSwitch(event.leagueId);
 
     for (const cafe of cafes) {
-      const devices = await this.db.getCafesWithAutoSwitch(cafe.id);
+      const devices = await this.db.getCafeDevices(cafe.id);
 
       for (const device of devices) {
         // Switch back to regular playlist
@@ -299,9 +301,11 @@ export class SportsService {
           eventId: event.id,
           cafeId: cafe.id,
           deviceId: device.id,
-          triggerType: 'match_end',
-          actionType: 'switch_layer',
-          actionConfig: { layer: 1 }
+          triggerType: 'auto_switch',
+          actionType: 'switch_back',
+          actionConfig: { layer: 1 },
+          executedAt: new Date(),
+          executionStatus: 'executed'
         });
       }
     }
@@ -392,7 +396,7 @@ export class SportsService {
    * Get upcoming matches for a specific league
    */
   public async getLeagueSchedule(leagueId: string): Promise<SportsEvent[]> {
-    return this.db.getUpcomingMatchesByLeague(leagueId);
+    return this.db.getUpcomingMatches(new Date());
   }
 
   /**
