@@ -6,6 +6,7 @@
 export interface User {
   id: string;
   email: string;
+  password?: string; // For creation only, not stored in type usually
   name: string;
   role: 'super_admin' | 'cafe_manager' | 'advertiser';
   phone?: string;
@@ -280,10 +281,24 @@ export interface IrCommands {
   mute: string;
 }
 
+// Match Trigger for automated sports switching
+export interface MatchTrigger {
+  id: string;
+  eventId: string;
+  cafeId: string;
+  deviceId: string;
+  triggerType: 'auto_switch' | 'halftime_ad' | 'fulltime_ad';
+  actionType: 'switch_to_hdmi' | 'switch_back' | 'trigger_ad';
+  actionConfig: Record<string, any>;
+  executedAt?: Date;
+  executionStatus: 'pending' | 'executed' | 'failed';
+  createdAt: Date;
+}
+
 // Analytics & Smart Counter
 export interface SmartCounterEvent {
   id: string;
-  cafeId: string;
+  cafeId?: string; // Optional for system-wide events
   deviceId?: string;
   contentId?: string;
   adId?: string;

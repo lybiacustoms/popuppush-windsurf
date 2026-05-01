@@ -516,15 +516,15 @@ export class DatabaseService {
     `;
     await this.pool.query(query, [
       uuidv4(),
-      event.cafeId,
-      event.deviceId,
-      event.contentId,
-      event.adId,
-      event.playlistId,
+      event.cafeId || null,
+      event.deviceId || null,
+      event.contentId || null,
+      event.adId || null,
+      event.playlistId || null,
       event.eventType,
       JSON.stringify(event.metadata),
-      event.sessionId,
-      event.estimatedViewers
+      event.sessionId || null,
+      event.estimatedViewers || null
     ]);
   }
 
