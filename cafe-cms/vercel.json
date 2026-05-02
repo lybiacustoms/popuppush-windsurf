@@ -1,6 +1,7 @@
 {
   "version": 2,
   "name": "popuppush-dashboard",
+  "framework": "vite",
   "builds": [
     {
       "src": "package.json",
