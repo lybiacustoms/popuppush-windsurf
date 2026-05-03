@@ -87,16 +87,16 @@ app.set('io', io);
 // ROUTES
 // ============================================================================
 
-// Routes معطلة مؤقتاً - ستُفعل لاحقاً
-// app.use('/api/v1/auth', authRoutes);
-// app.use('/api/v1/cafes', cafeRoutes);
-// app.use('/api/v1/devices', deviceRoutes);
-// app.use('/api/v1/content', contentRoutes);
-// app.use('/api/v1/playlists', playlistRoutes);
-// app.use('/api/v1/schedules', scheduleRoutes);
-// app.use('/api/v1/layers', layerRoutes);
-// app.use('/api/v1/sports', sportsRoutes);
-// app.use('/api/v1/ads', adRoutes);
+// تفعيل جميع Routes
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/cafes', cafeRoutes);
+app.use('/api/v1/devices', deviceRoutes);
+app.use('/api/v1/content', contentRoutes);
+app.use('/api/v1/playlists', playlistRoutes);
+app.use('/api/v1/schedules', scheduleRoutes);
+app.use('/api/v1/layers', layerRoutes);
+app.use('/api/v1/sports', sportsRoutes);
+app.use('/api/v1/ads', adRoutes);
 
 // Health check
 app.get('/api/health', async (req, res) => {
